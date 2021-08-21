@@ -26,8 +26,9 @@ for client libraries to work.
 2. Bring up the FinAppServer hosting a grpc service.
 
     ```
-    $ mvn verify
-    $ mvn exec:java -Dexec.mainClass=com.google.finapp.ServerMain
+    $ bazel run server/java/com/google/finapp:server_bin -- \     --spanner_project_id=test-project-id \
+    --spanner_instance_id=test-instance-id \
+    --spanner_database_id=test-database
     ```
 
 3. Call RPCs using grpc_cli.

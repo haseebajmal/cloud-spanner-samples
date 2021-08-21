@@ -17,7 +17,6 @@ package com.google.finapp;
 import com.google.inject.Inject;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.grpc.protobuf.services.ProtoReflectionService;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
@@ -32,11 +31,7 @@ final class FinAppServer {
   @Inject
   FinAppServer(@ArgsModule.Port int port, FinAppService finAppService) {
     this.port = port;
-    this.grpcServer =
-        ServerBuilder.forPort(port)
-            .addService(finAppService)
-            .addService(ProtoReflectionService.newInstance())
-            .build();
+    this.grpcServer = ServerBuilder.forPort(port).addService(finAppService).build();
   }
 
   void start() throws IOException {

@@ -22,7 +22,6 @@ import static org.junit.Assert.assertThrows;
 import com.google.cloud.ByteArray;
 import com.google.cloud.spanner.Database;
 import com.google.cloud.spanner.DatabaseClient;
-import com.google.cloud.spanner.IntegrationTest;
 import com.google.cloud.spanner.IntegrationTestEnv;
 import com.google.cloud.spanner.Key;
 import com.google.cloud.spanner.KeySet;
@@ -47,9 +46,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-@Category(IntegrationTest.class)
 public class FinAppIT {
 
   private SpannerDaoInterface spannerDao;
@@ -61,9 +58,7 @@ public class FinAppIT {
   @BeforeClass
   public static void setup() throws IOException {
     RemoteSpannerHelper testHelper = env.getTestHelper();
-    db =
-        testHelper.createTestDatabase(
-            extractStatementsFromSDLFile("src/main/java/com/google/finapp/schema.sdl"));
+    db = testHelper.createTestDatabase(extractStatementsFromSDLFile("schema/schema.sdl"));
   }
 
   @Before

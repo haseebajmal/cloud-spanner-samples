@@ -18,15 +18,11 @@ dependencies {
     runtimeOnly group: 'io.grpc', name: 'grpc-grpclb', version:'1.38.0'
     testImplementation group: 'junit', name: 'junit', version:'4.13.1'
     testImplementation group: 'org.junit.jupiter', name: 'junit-jupiter-params', version:'5.7.0'
-    testImplementation group: 'com.google.cloud', name: 'google-cloud-spanner', version:'6.3.3', classifier: 'tests'
     testImplementation group: 'com.google.truth', name: 'truth', version:'1.1.3'
     compileOnly group: 'org.apache.tomcat', name: 'annotations-api', version:'6.0.53'
 }
 
 test {
-    systemProperty "spanner.testenv.config.class", "com.google.cloud.spanner.GceTestEnvConfig"
-    systemProperty "spanner.testenv.instance", "projects/test-project/instances/test-instance"
-    systemProperty 'SPANNER_USE_JDBC', System.getProperty('SPANNER_USE_JDBC', 'false')
     dependsOn cleanTest
     testLogging {
         events "passed", "skipped", "failed"

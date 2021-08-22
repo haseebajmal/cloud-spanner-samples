@@ -20,110 +20,72 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.cloud.ByteArray;
-import com.google.cloud.spanner.Database;
 import com.google.cloud.spanner.DatabaseClient;
-import com.google.cloud.spanner.IntegrationTest;
-import com.google.cloud.spanner.IntegrationTestEnv;
+import com.google.cloud.spanner.DatabaseId;
 import com.google.cloud.spanner.Key;
 import com.google.cloud.spanner.KeySet;
-import com.google.cloud.spanner.Mutation;
 import com.google.cloud.spanner.ResultSet;
-import com.google.cloud.spanner.Value;
-import com.google.cloud.spanner.testing.RemoteSpannerHelper;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
+import com.google.cloud.spanner.Spanner;
+import com.google.cloud.spanner.SpannerOptions;
+import com.google.finapp.CreateAccountRequest.Status;
+import com.google.finapp.CreateAccountRequest.Type;
+import com.google.protobuf.ByteString;
+import io.grpc.ManagedChannelBuilder;
+import io.grpc.StatusException;
+import io.grpc.StatusRuntimeException;
 import java.math.BigDecimal;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Scanner;
-import java.util.UUID;
-import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-@Category(IntegrationTest.class)
+@RunWith(JUnit4.class)
 public class FinAppIT {
 
-  private SpannerDaoInterface spannerDao;
+  private static final String DEFAULT_AMOUNT = "100";
+
   private DatabaseClient databaseClient;
-  private static Database db;
+  private FinAppGrpc.FinAppBlockingStub finAppService;
 
-  @ClassRule public static IntegrationTestEnv env = new IntegrationTestEnv();
-
-  @BeforeClass
-  public static void setup() throws IOException {
-    RemoteSpannerHelper testHelper = env.getTestHelper();
-    db =
-        testHelper.createTestDatabase(
-            extractStatementsFromSDLFile("src/main/java/com/google/finapp/schema.sdl"));
+  @Before
+  public void setupFinappService() {
+    System.out.println("Setting up finappservice");
+    finAppService =
+        FinAppGrpc.newBlockingStub(
+            ManagedChannelBuilder.forAddress("localhost", 8080).usePlaintext().build());
+    System.out.println("Setting up finappservice end");
   }
 
   @Before
   public void setupSpannerDao() {
-    RemoteSpannerHelper testHelper = env.getTestHelper();
-    databaseClient = testHelper.getDatabaseClient(db);
-    if (System.getProperty("SPANNER_USE_JDBC") == null
-        || System.getProperty("SPANNER_USE_JDBC").equalsIgnoreCase("false")) {
-      spannerDao = new SpannerDaoImpl(databaseClient);
-    } else {
-      spannerDao =
-          new SpannerDaoJDBCImpl(
-              testHelper.getOptions().getProjectId(),
-              testHelper.getInstanceId().getInstance(),
-              db.getId().getDatabase());
-    }
-  }
-
-  private static List<String> extractStatementsFromSDLFile(String filename)
-      throws FileNotFoundException {
-    File file = new File(filename);
-    BufferedReader reader = new BufferedReader(new FileReader(file));
-    StringBuilder builder = new StringBuilder();
-    try (Scanner scanner = new Scanner(reader)) {
-      while (scanner.hasNextLine()) {
-        String line = scanner.nextLine();
-        if (!line.startsWith("--")) { // ignore comments
-          builder.append(line);
-        }
-      }
-    }
-    return List.of(builder.toString().split(";")); // separate into individual statements
-  }
-
-  @AfterClass
-  public static void tearDown() {
-    db.drop();
+    Spanner spanner = SpannerOptions.newBuilder().build().getService();
+    databaseClient =
+        spanner.getDatabaseClient(DatabaseId.of("test-project", "test-instance", "test-database"));
   }
 
   @Test
   public void createAccount_createsSingleValidAccount() throws Exception {
-    ByteArray accountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    BigDecimal amount = new BigDecimal(2);
-    spannerDao.createAccount(
-        accountId,
-        AccountType.UNSPECIFIED_ACCOUNT_TYPE /* = 0*/,
-        AccountStatus.UNSPECIFIED_ACCOUNT_STATUS /* = 0*/,
-        amount);
+    CreateAccountResponse response =
+        finAppService.createAccount(
+            CreateAccountRequest.newBuilder()
+                .setType(Type.CHECKING)
+                .setStatus(Status.ACTIVE)
+                .setBalance(DEFAULT_AMOUNT)
+                .build());
+    ByteArray accountId = ByteArray.copyFrom(response.getAccountId().toByteArray());
     try (ResultSet resultSet =
         databaseClient
             .singleUse()
             .read(
                 "Account",
-                KeySet.newBuilder().addKey(Key.of(accountId)).build(),
+                KeySet.singleKey(Key.of(accountId)),
                 Arrays.asList("AccountType", "AccountStatus", "Balance"))) {
       int count = 0;
       while (resultSet.next()) {
-        assertThat(resultSet.getLong(0)).isEqualTo(0);
-        assertThat(resultSet.getLong(1)).isEqualTo(0);
-        assertThat(resultSet.getBigDecimal(2)).isEqualTo(amount);
+        assertThat(resultSet.getLong(0)).isEqualTo(1);
+        assertThat(resultSet.getLong(1)).isEqualTo(1);
+        assertThat(resultSet.getBigDecimal(2)).isEqualTo(new BigDecimal(DEFAULT_AMOUNT));
         count++;
       }
       assertThat(count).isEqualTo(1);
@@ -132,140 +94,89 @@ public class FinAppIT {
 
   @Test
   public void moveAccountBalance_validTransfer() throws Exception {
-    ByteArray fromAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    ByteArray toAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    BigDecimal fromAccountBalance = new BigDecimal(20);
-    BigDecimal toAccountBalance = new BigDecimal(0);
-    BigDecimal amount = new BigDecimal(10);
-    databaseClient.write(
-        ImmutableList.of(
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(fromAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(fromAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build(),
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(toAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(toAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build()));
-    ImmutableMap result = spannerDao.moveAccountBalance(fromAccountId, toAccountId, amount);
+    ByteString fromAccountId = createAccount(/* amount= */ "100");
+    ByteString toAccountId = createAccount(/* amount= */ "50");
+
+    MoveAccountBalanceResponse response =
+        finAppService.moveAccountBalance(
+            MoveAccountBalanceRequest.newBuilder()
+                .setAmount("10")
+                .setFromAccountId(fromAccountId)
+                .setToAccountId(toAccountId)
+                .build());
+
+    assertThat(response.getFromAccountIdBalance()).isEqualTo("90");
+    assertThat(response.getToAccountIdBalance()).isEqualTo("60");
+    ByteArray fromAccountIdBytes = ByteArray.copyFrom(fromAccountId.toByteArray());
+    ByteArray toAccountIdBytes = ByteArray.copyFrom(toAccountId.toByteArray());
     try (ResultSet resultSet =
         databaseClient
             .singleUse()
             .read(
                 "Account",
                 KeySet.newBuilder()
-                    .addKey(Key.of(fromAccountId))
-                    .addKey(Key.of(toAccountId))
+                    .addKey(Key.of(fromAccountIdBytes))
+                    .addKey(Key.of(toAccountIdBytes))
                     .build(),
                 Arrays.asList("AccountId", "Balance"))) {
       int count = 0;
       while (resultSet.next()) {
-        if (resultSet.getBytes(0).equals(fromAccountId)) {
-          assertThat(resultSet.getBigDecimal(1)).isEqualTo(fromAccountBalance.subtract(amount));
+        if (resultSet.getBytes(0).equals(fromAccountIdBytes)) {
+          assertThat(resultSet.getBigDecimal(1)).isEqualTo(BigDecimal.valueOf(90));
           count++;
-        } else if (resultSet.getBytes(0).equals(toAccountId)) {
-          assertThat(resultSet.getBigDecimal(1)).isEqualTo(toAccountBalance.add(amount));
+        } else if (resultSet.getBytes(0).equals(toAccountIdBytes)) {
+          assertThat(resultSet.getBigDecimal(1)).isEqualTo(BigDecimal.valueOf(60));
           count++;
         }
       }
       assertThat(count).isEqualTo(2);
-      assertThat(result.keySet()).containsExactly(fromAccountId, toAccountId);
-      assertThat(result.get(fromAccountId)).isEqualTo(fromAccountBalance.subtract(amount));
-      assertThat(result.get(toAccountId)).isEqualTo(toAccountBalance.add(amount));
     }
   }
 
   @Test
   public void moveAccountBalance_negativeAmount_throwsException() throws Exception {
-    ByteArray fromAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    ByteArray toAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    BigDecimal fromAccountBalance = new BigDecimal(20);
-    BigDecimal toAccountBalance = new BigDecimal(0);
-    BigDecimal amount = new BigDecimal(-10);
-    databaseClient.write(
-        ImmutableList.of(
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(fromAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(fromAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build(),
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(toAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(toAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build()));
+    ByteString fromAccountId = createAccount(DEFAULT_AMOUNT);
+    ByteString toAccountId = createAccount(DEFAULT_AMOUNT);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> spannerDao.moveAccountBalance(fromAccountId, toAccountId, amount));
+    StatusRuntimeException expected =
+        assertThrows(
+            StatusRuntimeException.class,
+            () ->
+                finAppService.moveAccountBalance(
+                    MoveAccountBalanceRequest.newBuilder()
+                        .setAmount("-10")
+                        .setFromAccountId(fromAccountId)
+                        .setToAccountId(toAccountId)
+                        .build()));
+    assertThat(expected).hasMessageThat().contains("cannot be negative");
   }
 
   @Test
   public void moveAccountBalance_tooLargeAmount_throwsException() throws Exception {
-    ByteArray fromAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    ByteArray toAccountId = UuidConverter.getBytesFromUuid(UUID.randomUUID());
-    BigDecimal fromAccountBalance = new BigDecimal(20);
-    BigDecimal toAccountBalance = new BigDecimal(0);
-    BigDecimal amount = new BigDecimal(25);
-    databaseClient.write(
-        ImmutableList.of(
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(fromAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(fromAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build(),
-            Mutation.newInsertBuilder("Account")
-                .set("AccountId")
-                .to(toAccountId)
-                .set("AccountType")
-                .to(AccountType.UNSPECIFIED_ACCOUNT_TYPE.getNumber())
-                .set("AccountStatus")
-                .to(AccountStatus.UNSPECIFIED_ACCOUNT_STATUS.getNumber())
-                .set("Balance")
-                .to(toAccountBalance)
-                .set("CreationTimestamp")
-                .to(Value.COMMIT_TIMESTAMP)
-                .build()));
+    ByteString fromAccountId = createAccount(/* amount= */ "100");
+    ByteString toAccountId = createAccount(DEFAULT_AMOUNT);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> spannerDao.moveAccountBalance(fromAccountId, toAccountId, amount));
+    StatusRuntimeException expected =
+        assertThrows(
+            StatusRuntimeException.class,
+            () ->
+                finAppService.moveAccountBalance(
+                    MoveAccountBalanceRequest.newBuilder()
+                        .setAmount("200")
+                        .setFromAccountId(fromAccountId)
+                        .setToAccountId(toAccountId)
+                        .build()));
+    assertThat(expected).hasMessageThat().contains("greater than original balance");
+  }
+
+  private ByteString createAccount(String amount) throws StatusException {
+    return finAppService
+        .createAccount(
+            CreateAccountRequest.newBuilder()
+                .setType(Type.CHECKING)
+                .setStatus(Status.ACTIVE)
+                .setBalance(amount)
+                .build())
+        .getAccountId();
   }
 }

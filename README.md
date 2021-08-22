@@ -4,7 +4,7 @@ This repository contains a sample banking application built using Cloud Spanner.
 
 ## How to run the application locally
 
-NOTE: Requires gcloud, mvn, grpc_cli installed.
+NOTE: Requires gcloud, grpc_cli installed.
 
 1. Create a database locally using cloud-spanner-emulator and export spanner host
 for client libraries to work.
@@ -26,8 +26,8 @@ for client libraries to work.
 2. Bring up the FinAppServer hosting a grpc service.
 
     ```
-    $ mvn verify
-    $ mvn exec:java -Dexec.mainClass=com.google.finapp.ServerMain
+    $ ./gradlew :server:run \
+        --args="--spanner_project_id=test-project --spanner_instance_id=test-instance --spanner_database_id=test-database"
     ```
 
 3. Call RPCs using grpc_cli.
@@ -40,5 +40,5 @@ for client libraries to work.
 ## How to run the application tests
 
 1. Set up the emulator as described in #1 above.
-2. Run `mvn integration-test`.
-> To run the tests using the JDBC implementation of the application instead of the Java client implementation, run `mvn integration-test -DSPANNER_USE_JDBC=true`
+2. Run `./gradlew test`.
+   > To run the tests using the JDBC implementation of the application instead of the Java client implementation, run `./gradlew test -DSPANNER_USE_JDBC=1`

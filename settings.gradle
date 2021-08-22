@@ -1,0 +1,6 @@
+rootProject.name = 'finapp'
+include ':server'
+include ':workload'
+
+project(':server').projectDir = "$rootDir/server" as File
+project(':workload').projectDir = "$rootDir/workload" as File

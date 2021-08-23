@@ -39,6 +39,5 @@ for client libraries to work.
 
 ## How to run the application tests
 
-1. Set up the emulator as described in #1 above.
-2. Run `./gradlew test`.
+1. Run `./gradlew test`.
    > To run the tests using the JDBC implementation of the application instead of the Java client implementation, run `./gradlew test -DSPANNER_USE_JDBC=1`

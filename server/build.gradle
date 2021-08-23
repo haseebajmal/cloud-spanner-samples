@@ -22,14 +22,6 @@ dependencies {
     compileOnly group: 'org.apache.tomcat', name: 'annotations-api', version:'6.0.53'
 }
 
-test {
-    dependsOn cleanTest
-    testLogging {
-        events "passed", "skipped", "failed"
-        showStandardStreams true
-    }
-}
-
 sourceSets {
     main {
         java {
@@ -37,4 +29,75 @@ sourceSets {
             srcDirs 'build/generated/source/proto/main/java'
         }
     }
+}
+
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Callable
+
+task startGrpcServer() {
+    doLast {
+        println("Executing startGrpcServer task")
+        ExecutorService es = Executors.newSingleThreadExecutor()
+        es.submit({
+            javaexec {
+                classpath = project.sourceSets.main.runtimeClasspath
+                main = "com.google.finapp.ServerMain"
+                args = [
+                    "--spanner_project_id=test-project",
+                    "--spanner_instance_id=test-instance",
+                    "--spanner_database_id=test-database"]
+                errorOutput = System.out
+            }} as Callable)
+        ant.waitfor(
+            maxwait:"10", maxwaitunit:"second", 
+            checkevery:"500", checkeveryunit: "millisecond"
+        ){
+            socket(server:"localhost", port:8080)
+        }
+        ext.es = es
+    }
+}
+
+task configureEmulator() {
+    doFirst {
+        exec {
+            commandLine 'chmod', '+x', 'configure_emulator.sh'
+        }
+    }
+    doLast {
+        exec {
+            commandLine './configure_emulator.sh'
+        }
+    }
+}
+
+task startEmulator() {
+    ExecutorService es = Executors.newSingleThreadExecutor()
+    es.submit({
+        exec {
+            commandLine 'gcloud', 'emulators', 'spanner', 'start'
+        }} as Callable)
+    ant.waitfor(
+        maxwait:"10", maxwaitunit:"second", 
+        checkevery:"500", checkeveryunit: "millisecond"
+    ){
+        socket(server:"localhost", port:9020)
+    }
+    finalizedBy tasks.configureEmulator
+}
+
+task shutDownServers(type:Exec) {
+    commandLine 'fuser', '-k', '8080/tcp', '9010/tcp', '9020/tcp'
+}
+
+test {
+    dependsOn tasks.startGrpcServer
+    dependsOn tasks.startEmulator
+    dependsOn cleanTest
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams true
+    }
+    finalizedBy tasks.shutDownServers
 }

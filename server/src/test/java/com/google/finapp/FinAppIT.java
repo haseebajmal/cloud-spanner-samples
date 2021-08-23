@@ -50,11 +50,9 @@ public class FinAppIT {
 
   @Before
   public void setupFinappService() {
-    System.out.println("Setting up finappservice");
     finAppService =
         FinAppGrpc.newBlockingStub(
             ManagedChannelBuilder.forAddress("localhost", 8080).usePlaintext().build());
-    System.out.println("Setting up finappservice end");
   }
 
   @Before
